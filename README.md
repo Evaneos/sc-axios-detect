@@ -2,11 +2,34 @@
 
 Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` and `axios@0.30.4` which pull in `plain-crypto-js@4.2.1`, a confirmed malicious package.
 
+**Pre-built binaries** (no Python or dependencies needed):
+
+Download from the [latest release](https://github.com/Evaneos/sc-axios-detect/releases/latest), then run:
+
+```bash
+# Linux
+chmod +x detect-axios-linux-amd64
+./detect-axios-linux-amd64
+
+# macOS (Apple Silicon)
+chmod +x detect-axios-darwin-arm64
+./detect-axios-darwin-arm64
+
+# macOS (Intel)
+chmod +x detect-axios-darwin-amd64
+./detect-axios-darwin-amd64
+
+# Windows
+detect-axios-windows-amd64.exe
+```
+
+**From source** (requires Python 3, no other dependencies):
+
 ```bash
 # Linux / macOS
 ./locally/detect-axios.sh
 
-# Any platform (Linux, macOS, Windows) — requires Python 3
+# Any platform (Linux, macOS, Windows)
 python3 locally/detect-axios.py
 ```
 
