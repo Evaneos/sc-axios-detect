@@ -23,11 +23,13 @@ LOCKFILES=("package-lock.json" "yarn.lock" "pnpm-lock.yaml" "bun.lock" "bun.lock
 
 PARALLEL=10
 BRANCH_MODE="default"  # "default" = default branch only, "all" = all branches
+INCLUDE_ARCHIVED=false
+INCLUDE_FORKS=false
 ORG=""
 
 # --- Parse args ---
 usage() {
-  echo "Usage: $0 <github-org> [--branch default|all] [--parallel <n>]"
+  echo "Usage: $0 <github-org> [--branch default|all] [--parallel <n>] [--include-archived] [--include-forks]"
   exit 1
 }
 
@@ -35,6 +37,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch) BRANCH_MODE="$2"; shift 2 ;;
     --parallel) PARALLEL="$2"; shift 2 ;;
+    --include-archived) INCLUDE_ARCHIVED=true; shift ;;
+    --include-forks) INCLUDE_FORKS=true; shift ;;
     --help|-h) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) ORG="$1"; shift ;;
@@ -89,8 +93,17 @@ echo ""
 echo -e "${BOLD}Fetching repository list...${RESET}"
 
 # Try org endpoint first, fall back to user endpoint
-REPOS=$(gh api --paginate "/orgs/${ORG}/repos" --jq '.[].full_name' 2>/dev/null) || \
-  REPOS=$(gh api --paginate "/users/${ORG}/repos" --jq '.[].full_name' 2>/dev/null) || \
+JQ_FILTER='.[]'
+if [[ "$INCLUDE_ARCHIVED" == false ]]; then
+  JQ_FILTER="${JQ_FILTER} | select(.archived == false)"
+fi
+if [[ "$INCLUDE_FORKS" == false ]]; then
+  JQ_FILTER="${JQ_FILTER} | select(.fork == false)"
+fi
+JQ_FILTER="${JQ_FILTER} | .full_name"
+
+REPOS=$(gh api --paginate "/orgs/${ORG}/repos" --jq "$JQ_FILTER" 2>/dev/null) || \
+  REPOS=$(gh api --paginate "/users/${ORG}/repos" --jq "$JQ_FILTER" 2>/dev/null) || \
   true
 
 # Filter out any empty lines
@@ -260,6 +273,7 @@ scan_repo() {
 
 export -f scan_repo gh_api_retry
 export RED YELLOW GREEN BOLD DIM RESET
+export INCLUDE_ARCHIVED INCLUDE_FORKS
 export COMPROMISED_VERSION MALICIOUS_DEP BRANCH_MODE REPO_COUNT
 export RESULTS_FILE PROGRESS_FILE
 export LOCKFILES_STR="${LOCKFILES[*]}"
