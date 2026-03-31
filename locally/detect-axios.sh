@@ -15,6 +15,30 @@
 
 set -euo pipefail
 
+# --- Pre-run dependency checks ---
+MISSING_REQUIRED=()
+MISSING_OPTIONAL=()
+
+for cmd in find grep; do
+  command -v "$cmd" &>/dev/null || MISSING_REQUIRED+=("$cmd")
+done
+
+if [[ ${#MISSING_REQUIRED[@]} -gt 0 ]]; then
+  echo "FATAL: missing required commands: ${MISSING_REQUIRED[*]}"
+  echo "Install them and re-run."
+  exit 2
+fi
+
+for cmd in python3 pgrep ss lsof journalctl timeout npm; do
+  command -v "$cmd" &>/dev/null || MISSING_OPTIONAL+=("$cmd")
+done
+
+if [[ ${#MISSING_OPTIONAL[@]} -gt 0 ]]; then
+  echo "NOTE: some optional commands are missing: ${MISSING_OPTIONAL[*]}"
+  echo "  The scan will run but some checks will be skipped."
+  echo ""
+fi
+
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
@@ -40,6 +64,15 @@ RAT_USER_AGENT="mozilla/4.0 (compatible; msie 8.0; windows nt 5.1; trident/4.0)"
 ROOT="${1:-/}"
 FOUND=0
 SEVERITY="CLEAN"  # CLEAN → LATENT → INSTALLED → CONFIRMED
+
+# JSON findings collector — one TSV line per finding: category \t type \t detail \t path
+FINDINGS_TMP=$(mktemp)
+trap 'rm -f "$FINDINGS_TMP"' EXIT
+
+record_finding() {
+  # Args: category type detail [path]
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >> "$FINDINGS_TMP"
+}
 
 # Prune expression for find: skip virtual/network filesystems and system dirs
 # that cannot contain node_modules or JS lockfiles.
@@ -88,14 +121,14 @@ while IFS= read -r pkg_json; do
   version=$(grep -o '"version"\s*:\s*"[^"]*"' "$pkg_json" 2>/dev/null | head -1 | grep -o '[0-9][^"]*' || true)
   if [[ "$version" == "$COMPROMISED_VERSION" || "$version" == "$COMPROMISED_VERSION_0X" ]]; then
     log_alert "Compromised axios@${version} installed at: ${pkg_json}"
-    # LATENT, not INSTALLED: the presence of axios itself doesn't mean plain-crypto-js
-    # was installed and its postinstall executed. Step 3 checks for that specifically.
+    record_finding "node_modules" "compromised_axios" "axios@${version}" "$pkg_json"
     escalate_severity "LATENT"
   fi
 
   # Check if plain-crypto-js is a dependency
   if grep -q "$MALICIOUS_DEP" "$pkg_json" 2>/dev/null; then
     log_alert "Malicious dependency '${MALICIOUS_DEP}' found in: ${pkg_json}"
+    record_finding "node_modules" "malicious_dependency" "$MALICIOUS_DEP" "$pkg_json"
     escalate_severity "LATENT"
   fi
 done < <(find "$ROOT" \
@@ -141,10 +174,12 @@ sys.exit(rc)
           local rc=$?
           if (( rc & 1 )); then
             log_alert "Compromised axios version in lockfile: ${file}"
+            record_finding "lockfile" "compromised_axios" "axios" "$file"
             hit=1
           fi
           if (( rc & 2 )); then
             log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
+            record_finding "lockfile" "malicious_dependency" "$MALICIOUS_DEP" "$file"
             hit=1
           fi
         fi
@@ -155,11 +190,13 @@ sys.exit(rc)
       if grep -qE "^\"?axios@" "$file" 2>/dev/null; then
         if grep -A5 "^\"*axios@" "$file" 2>/dev/null | grep -qE "version:?\s+\"?(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"?"; then
           log_alert "Compromised axios version in lockfile: ${file}"
+          record_finding "lockfile" "compromised_axios" "axios" "$file"
           hit=1
         fi
       fi
       if grep -q "$MALICIOUS_DEP" "$file" 2>/dev/null; then
         log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
+        record_finding "lockfile" "malicious_dependency" "$MALICIOUS_DEP" "$file"
         hit=1
       fi
       ;;
@@ -168,10 +205,12 @@ sys.exit(rc)
       # pnpm format: '/axios/1.14.1' or 'axios: 1.14.1'
       if grep -qE "['\"]/axios/(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})['\"]|axios:\s+(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
         log_alert "Compromised axios version in lockfile: ${file}"
+        record_finding "lockfile" "compromised_axios" "axios" "$file"
         hit=1
       fi
       if grep -q "$MALICIOUS_DEP" "$file" 2>/dev/null; then
         log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
+        record_finding "lockfile" "malicious_dependency" "$MALICIOUS_DEP" "$file"
         hit=1
       fi
       ;;
@@ -180,10 +219,12 @@ sys.exit(rc)
       # bun.lock is JSONC — use JSON-aware pattern
       if grep -qE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$file" 2>/dev/null; then
         log_alert "Compromised axios version in lockfile: ${file}"
+        record_finding "lockfile" "compromised_axios" "axios" "$file"
         hit=1
       fi
       if grep -q "$MALICIOUS_DEP" "$file" 2>/dev/null; then
         log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
+        record_finding "lockfile" "malicious_dependency" "$MALICIOUS_DEP" "$file"
         hit=1
       fi
       ;;
@@ -194,10 +235,12 @@ sys.exit(rc)
       if grep -qa "axios" "$file" 2>/dev/null && \
          grep -qaE "(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
         log_alert "Compromised axios version in lockfile: ${file}"
+        record_finding "lockfile" "compromised_axios" "axios" "$file"
         hit=1
       fi
       if grep -qa "$MALICIOUS_DEP" "$file" 2>/dev/null; then
         log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
+        record_finding "lockfile" "malicious_dependency" "$MALICIOUS_DEP" "$file"
         hit=1
       fi
       ;;
@@ -228,6 +271,7 @@ echo -e "${BOLD}[3/6] Scanning for malicious packages in node_modules...${RESET}
 
 while IFS= read -r mal_pkg; do
   log_alert "Malicious package installed: ${mal_pkg}"
+  record_finding "installed" "malicious_package" "$MALICIOUS_DEP" "$mal_pkg"
   escalate_severity "INSTALLED"
 done < <(find "$ROOT" \
   "${FIND_PRUNE[@]}" \
@@ -238,6 +282,7 @@ done < <(find "$ROOT" \
 for related_pkg in "${RELATED_PKGS[@]}"; do
   while IFS= read -r rel_pkg; do
     log_alert "Related campaign package installed: ${rel_pkg}"
+    record_finding "installed" "related_campaign_package" "$related_pkg" "$rel_pkg"
     escalate_severity "INSTALLED"
   done < <(find "$ROOT" \
     "${FIND_PRUNE[@]}" \
@@ -256,6 +301,7 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
   for rat_path in "${RAT_PATHS_DARWIN[@]}"; do
     if [[ -f "$rat_path" ]]; then
       log_alert "RAT payload found: ${rat_path}"
+      record_finding "artifact" "rat_payload" "macOS RAT binary" "$rat_path"
       ARTIFACT_FOUND=true
       # Verify it's not legitimately signed by Apple
       if command -v codesign &>/dev/null; then
@@ -269,6 +315,7 @@ elif [[ "$OS_TYPE" == "Linux" ]]; then
   for rat_path in "${RAT_PATHS_LINUX[@]}"; do
     if [[ -f "$rat_path" ]]; then
       log_alert "RAT payload found: ${rat_path}"
+      record_finding "artifact" "rat_payload" "Linux RAT script" "$rat_path"
       ARTIFACT_FOUND=true
     fi
   done
@@ -278,6 +325,7 @@ fi
 if [[ "$OS_TYPE" == "Linux" ]] && [[ -d /mnt/c/ProgramData ]]; then
   if [[ -f /mnt/c/ProgramData/wt.exe ]]; then
     log_alert "RAT payload found: /mnt/c/ProgramData/wt.exe (Windows via WSL)"
+    record_finding "artifact" "rat_payload" "Windows RAT binary (WSL)" "/mnt/c/ProgramData/wt.exe"
     ARTIFACT_FOUND=true
   fi
 fi
@@ -297,12 +345,14 @@ for tmp_dir in "${TEMP_DIRS[@]}"; do
   for dropper_name in "${DROPPER_NAMES[@]}"; do
     while IFS= read -r dropper_file; do
       log_alert "Dropper artifact found: ${dropper_file}"
+      record_finding "artifact" "dropper_file" "$dropper_name" "$dropper_file"
       ARTIFACT_FOUND=true
     done < <(find "$tmp_dir" -maxdepth 2 -name "$dropper_name" -type f 2>/dev/null || true)
   done
   # Also check for the generic patterns (catch variants)
   while IFS= read -r suspicious_file; do
     log_alert "Suspicious recent file in temp directory: ${suspicious_file}"
+    record_finding "artifact" "suspicious_temp_file" "pattern match" "$suspicious_file"
     ARTIFACT_FOUND=true
   done < <(find "$tmp_dir" -maxdepth 2 -type f \
     \( -name "*.sh" -o -name "*.bat" -o -name "*.cmd" -o -name "*.ps1" -o -perm /111 \) \
@@ -318,11 +368,13 @@ if command -v pgrep &>/dev/null; then
   # macOS: RAT runs from /Library/Caches/com.apple.act.mond
   if pgrep -f "com.apple.act.mond" &>/dev/null; then
     log_alert "Running process matches RAT: com.apple.act.mond"
+    record_finding "process" "rat_process" "com.apple.act.mond" ""
     ARTIFACT_FOUND=true
   fi
   # Linux: python3 /tmp/ld.py orphaned to PID 1
   if pgrep -f "/tmp/ld.py" &>/dev/null; then
     log_alert "Running process matches RAT: python3 /tmp/ld.py"
+    record_finding "process" "rat_process" "/tmp/ld.py" ""
     ARTIFACT_FOUND=true
   fi
   # Windows payload name via WSL
@@ -335,15 +387,18 @@ fi
 if command -v ss &>/dev/null; then
   if ss -tnp 2>/dev/null | grep -qE "${C2_IP}|:${C2_PORT}" 2>/dev/null; then
     log_alert "Active connection to C2 IP ${C2_IP} or port ${C2_PORT} detected (ss)"
+    record_finding "network" "c2_connection" "${C2_IP}:${C2_PORT}" ""
     ARTIFACT_FOUND=true
   fi
 elif command -v lsof &>/dev/null; then
   if lsof -i "@${C2_IP}" 2>/dev/null | grep -q . 2>/dev/null; then
     log_alert "Active connection to C2 IP ${C2_IP} detected (lsof)"
+    record_finding "network" "c2_connection" "${C2_IP}" ""
     ARTIFACT_FOUND=true
   fi
   if lsof -i ":${C2_PORT}" 2>/dev/null | grep -qE "${C2_DOMAIN}|${C2_IP}" 2>/dev/null; then
     log_alert "Active connection to C2 server on port ${C2_PORT} detected (lsof)"
+    record_finding "network" "c2_connection" "${C2_DOMAIN}:${C2_PORT}" ""
     ARTIFACT_FOUND=true
   fi
 fi
@@ -354,6 +409,7 @@ if [[ "$OS_TYPE" == "Darwin" ]] && command -v log &>/dev/null; then
   if timeout 30 log show --predicate "processImagePath contains 'mDNSResponder'" --last 48h 2>/dev/null \
     | grep -qE "${C2_DOMAIN}|${C2_IP}" 2>/dev/null; then
     log_alert "C2 indicator found in macOS DNS logs (${C2_DOMAIN} or ${C2_IP})"
+    record_finding "network" "c2_dns_log" "${C2_DOMAIN}" "macOS unified log"
     ARTIFACT_FOUND=true
   fi
 else
@@ -362,6 +418,7 @@ else
     if [[ -f "$logfile" ]]; then
       if grep -qE "${C2_DOMAIN}|${C2_IP}" "$logfile" 2>/dev/null; then
         log_alert "C2 indicator found in ${logfile}"
+        record_finding "network" "c2_log_trace" "${C2_DOMAIN}" "$logfile"
         ARTIFACT_FOUND=true
       fi
     fi
@@ -371,6 +428,7 @@ else
     if journalctl --since "48 hours ago" --no-pager -q 2>/dev/null \
       | grep -qE "${C2_DOMAIN}|${C2_IP}" 2>/dev/null; then
       log_alert "C2 indicator found in journald logs"
+      record_finding "network" "c2_log_trace" "${C2_DOMAIN}" "journald"
       ARTIFACT_FOUND=true
     fi
   fi
@@ -381,6 +439,7 @@ for access_log in /var/log/squid/access.log /var/log/nginx/access.log /var/log/a
   if [[ -f "$access_log" ]] && [[ -r "$access_log" ]]; then
     if grep -qi "msie 8.0.*windows nt 5.1.*trident/4.0" "$access_log" 2>/dev/null; then
       log_alert "RAT User-Agent signature found in ${access_log}"
+      record_finding "network" "rat_user_agent" "IE8 fake UA" "$access_log"
       ARTIFACT_FOUND=true
     fi
   fi
@@ -399,6 +458,7 @@ if [[ -d "$NPM_CACHE_DIR" ]]; then
   # Check _cacache content for plain-crypto-js references
   if grep -rq "${MALICIOUS_DEP}" "${NPM_CACHE_DIR}/_cacache/" 2>/dev/null; then
     log_alert "Malicious package '${MALICIOUS_DEP}' found in npm cache: ${NPM_CACHE_DIR}"
+    record_finding "npm_cache" "malicious_package" "$MALICIOUS_DEP" "${NPM_CACHE_DIR}/_cacache"
     log_warn "  Run 'npm cache clean --force' after investigation to remove cached malicious tarballs"
     escalate_severity "INSTALLED"
   fi
@@ -406,6 +466,7 @@ if [[ -d "$NPM_CACHE_DIR" ]]; then
   for related_pkg in "${RELATED_PKGS[@]}"; do
     if grep -rq "${related_pkg}" "${NPM_CACHE_DIR}/_cacache/" 2>/dev/null; then
       log_alert "Related campaign package '${related_pkg}' found in npm cache"
+      record_finding "npm_cache" "related_campaign_package" "$related_pkg" "${NPM_CACHE_DIR}/_cacache"
       escalate_severity "INSTALLED"
     fi
   done
@@ -415,6 +476,48 @@ fi
 
 if [[ "$ARTIFACT_FOUND" == true ]]; then
   escalate_severity "CONFIRMED"
+fi
+
+# --- Write JSON report (only if compromise detected) ---
+JSON_FILE=""
+if [[ "$SEVERITY" != "CLEAN" ]]; then
+  JSON_FILE="axios-scan-$(hostname -s 2>/dev/null || echo unknown)-$(date +%Y%m%d-%H%M%S).json"
+
+  python3 -c "
+import json, sys, os
+
+findings = []
+tsv_file = sys.argv[1]
+if os.path.getsize(tsv_file) > 0:
+    with open(tsv_file) as f:
+        for line in f:
+            parts = line.rstrip('\n').split('\t', 3)
+            if len(parts) >= 3:
+                entry = {'category': parts[0], 'type': parts[1], 'detail': parts[2]}
+                if len(parts) == 4 and parts[3]:
+                    entry['path'] = parts[3]
+                findings.append(entry)
+
+report = {
+    'scan_date': sys.argv[2],
+    'hostname': sys.argv[3],
+    'os': sys.argv[4],
+    'scan_root': sys.argv[5],
+    'severity': sys.argv[6],
+    'finding_count': int(sys.argv[7]),
+    'findings': findings
+}
+
+with open(sys.argv[8], 'w') as f:
+    json.dump(report, f, indent=2)
+" "$FINDINGS_TMP" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "$(hostname -s 2>/dev/null || echo unknown)" \
+  "$(uname)" \
+  "$ROOT" \
+  "$SEVERITY" \
+  "$FOUND" \
+  "$JSON_FILE"
 fi
 
 # --- Summary & Guidance ---
@@ -440,29 +543,6 @@ case "$SEVERITY" in
     echo -e " ${BOLD}TL;DR:${RESET} The compromised axios version is referenced in your lockfile but has"
     echo "  not been installed yet. Clean the lockfile and pin axios to a safe version"
     echo "  before running any install command."
-    echo ""
-    echo -e " ${BOLD}Step-by-step remediation:${RESET}"
-    echo ""
-    echo "  1. Pin axios to a safe version in package.json (1.14.0 for 1.x, 0.30.3 for 0.x)"
-    echo "     → This prevents the compromised version from being resolved on next install."
-    echo ""
-    echo "  2. Delete the compromised lockfile"
-    echo "     → The lockfile pins the malicious version; it must be regenerated clean."
-    echo ""
-    echo "  3. Delete node_modules/ directory"
-    echo "     → Ensures no cached resolution of the compromised dependency tree."
-    echo ""
-    echo "  4. Run a fresh install (npm install / bun install / yarn / pnpm install)"
-    echo "     → Regenerates a clean lockfile with the safe version."
-    echo ""
-    echo "  5. Verify: search the new lockfile for \"plain-crypto-js\""
-    echo "     → It should NOT appear. If it does, the version pin did not take effect."
-    echo ""
-    echo "  6. Commit the cleaned lockfile."
-    echo ""
-    echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent"
-    echo "  future supply chain attacks from silently upgrading to compromised versions."
-    exit 1
     ;;
 
   INSTALLED)
@@ -473,45 +553,6 @@ case "$SEVERITY" in
     echo -e " ${BOLD}TL;DR:${RESET} The malicious package plain-crypto-js was found in node_modules."
     echo "  The postinstall dropper has likely executed. Treat this as an active infection."
     echo -e "  ${RED}Rotate ALL secrets immediately and alert your security team.${RESET}"
-    echo ""
-    echo -e " ${YELLOW}⚠ WARNING:${RESET} The malware deletes its own artifacts after execution."
-    echo "  Absence of OS-level traces does NOT mean the system is clean."
-    echo ""
-    echo -e " ${BOLD}Step-by-step remediation:${RESET}"
-    echo ""
-    echo "  1. DO NOT delete node_modules yet"
-    echo "     → Preserve evidence for forensic analysis if needed."
-    echo ""
-    echo "  2. Manually inspect temp directories for dropper artifacts:"
-    echo "     - macOS/Linux: /tmp, \$TMPDIR, /var/tmp"
-    echo "     - Windows: C:\\ProgramData"
-    echo "     → Look for recently created executables or scripts you don't recognize."
-    echo ""
-    echo "  3. Check for network connections to the C2 server:"
-    echo "     - Search logs/connections for: ${C2_DOMAIN} or port 8000"
-    echo "     → Confirms whether the RAT payload was able to phone home."
-    echo ""
-    echo "  4. Rotate ALL secrets and credentials accessible from this environment:"
-    echo "     - .env files, CI/CD tokens, API keys, SSH keys, cloud credentials"
-    echo "     → The RAT had potential access to everything on this machine."
-    echo ""
-    echo "  5. Alert your security team and the rest of the organization."
-    echo "     → Other machines/environments may also be affected."
-    echo ""
-    echo "  6. Clean the npm cache:"
-    echo "     - Run: npm cache clean --force"
-    echo "     → Removes cached malicious tarballs that would re-infect on reinstall."
-    echo ""
-    echo "  7. Clean the lockfile:"
-    echo "     - Pin axios to a safe version (1.14.0 / 0.30.3)"
-    echo "     - Delete lockfile and node_modules/, reinstall, verify no plain-crypto-js"
-    echo ""
-    echo "  8. Consider the machine compromised until proven otherwise."
-    echo "     → Audit access logs for services this machine connected to."
-    echo ""
-    echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent"
-    echo "  future supply chain attacks from silently upgrading to compromised versions."
-    exit 1
     ;;
 
   CONFIRMED)
@@ -521,39 +562,13 @@ case "$SEVERITY" in
     echo ""
     echo -e " ${BOLD}TL;DR:${RESET} The RAT payload was deployed on this machine. This system is"
     echo -e "  compromised. ${RED}Rotate ALL secrets NOW and alert your security team immediately.${RESET}"
-    echo ""
-    echo -e " ${BOLD}Step-by-step remediation:${RESET}"
-    echo ""
-    echo "  1. Disconnect the machine from the network if possible."
-    echo "     → Prevents further data exfiltration via the C2 channel."
-    echo ""
-    echo "  2. DO NOT delete node_modules or artifacts yet."
-    echo "     → Preserve all evidence for forensic analysis."
-    echo ""
-    echo "  3. Rotate ALL secrets and credentials — not just on this machine:"
-    echo "     - .env files, CI/CD tokens, API keys, SSH keys, GPG keys, cloud credentials"
-    echo "     - Any service this machine had access to (AWS, GCP, GitHub, etc.)"
-    echo "     → The RAT had full access to the local environment."
-    echo ""
-    echo "  4. Alert your security team and the rest of the organization IMMEDIATELY."
-    echo "     → This is a confirmed breach, not a potential one."
-    echo ""
-    echo "  5. Audit recent activity:"
-    echo "     - Review git commits made from this machine (the attacker may have had"
-    echo "       access to SSH/GPG keys)"
-    echo "     - Check access logs of cloud services, CI/CD platforms, internal tools"
-    echo "     → Determine the blast radius of the compromise."
-    echo ""
-    echo "  6. Evaluate a full machine wipe and rebuild."
-    echo "     → The safest remediation for a confirmed RAT infection."
-    echo ""
-    echo "  7. After rebuild: clean npm cache and lockfile:"
-    echo "     - Run: npm cache clean --force"
-    echo "     - Pin axios to a safe version (1.14.0 / 0.30.3)"
-    echo "     - Delete lockfile and node_modules/, reinstall, verify no plain-crypto-js"
-    echo ""
-    echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent"
-    echo "  future supply chain attacks from silently upgrading to compromised versions."
-    exit 1
     ;;
 esac
+
+# For any compromise level, show JSON location and exit
+if [[ -n "$JSON_FILE" ]]; then
+  echo ""
+  echo -e " ${BOLD}Scan results saved to:${RESET} $(pwd)/${JSON_FILE}"
+  echo "  Send this file to your security team for triage."
+  exit 1
+fi
