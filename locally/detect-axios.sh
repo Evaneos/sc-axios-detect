@@ -146,9 +146,23 @@ sys.exit(rc)
       fi
       ;;
 
-    bun.lock|bun.lockb)
-      # bun.lock is JSONC, bun.lockb is binary — use format-specific pattern
-      if grep -qaE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$file" 2>/dev/null; then
+    bun.lock)
+      # bun.lock is JSONC — use JSON-aware pattern
+      if grep -qE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$file" 2>/dev/null; then
+        log_alert "Compromised axios version in lockfile: ${file}"
+        hit=1
+      fi
+      if grep -q "$MALICIOUS_DEP" "$file" 2>/dev/null; then
+        log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
+        hit=1
+      fi
+      ;;
+
+    bun.lockb)
+      # bun.lockb is binary — strings are stored separately, not as JSON
+      # Check that both "axios" and the compromised version appear in the file
+      if grep -qa "axios" "$file" 2>/dev/null && \
+         grep -qaE "(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
         log_alert "Compromised axios version in lockfile: ${file}"
         hit=1
       fi

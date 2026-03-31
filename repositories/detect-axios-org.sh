@@ -227,8 +227,15 @@ scan_repo() {
             found_axios=true
           fi
           ;;
-        bun.lock|bun.lockb)
-          if grep -qaE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$tmpfile" 2>/dev/null; then
+        bun.lock)
+          if grep -qE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$tmpfile" 2>/dev/null; then
+            found_axios=true
+          fi
+          ;;
+        bun.lockb)
+          # Binary format: strings stored separately, check both present
+          if grep -qa "axios" "$tmpfile" 2>/dev/null && \
+             grep -qaE "(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
