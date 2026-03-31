@@ -39,8 +39,14 @@ RAT_USER_AGENT_PATTERN = re.compile(
     r"msie 8\.0.*windows nt 5\.1.*trident/4\.0", re.IGNORECASE
 )
 
-# Directories that cannot contain node_modules or JS lockfiles.
-PRUNE_DIRS = {"/etc", "/boot", "/lost+found", "/bin", "/sbin", "/usr/bin", "/usr/sbin"}
+# Directories that cannot contain node_modules or JS lockfiles, per OS.
+PRUNE_DIRS_LINUX = {"/etc", "/boot", "/lost+found", "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+                    "/proc", "/sys", "/dev", "/run"}
+PRUNE_DIRS_DARWIN = {"/etc", "/boot", "/lost+found", "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+                     "/System", "/Library/Apple"}
+# Windows: C:\Windows contains OS binaries, C:\Recovery is system recovery.
+# Resolved at runtime from %SYSTEMROOT% to handle non-standard install paths.
+PRUNE_DIRS_WINDOWS: set[str] = set()  # populated in Scanner.__init__
 
 LOCKFILE_NAMES = {
     "package-lock.json",
@@ -61,6 +67,17 @@ class Scanner:
         self.severity = "CLEAN"
         self.findings: list[dict] = []
         self.os_type = platform.system()  # "Linux", "Darwin", "Windows"
+
+        # Build OS-specific prune set
+        if self.os_type == "Windows":
+            windir = os.environ.get("SYSTEMROOT", r"C:\Windows")
+            recovery = os.path.join(os.environ.get("SYSTEMDRIVE", "C:") + os.sep, "Recovery")
+            PRUNE_DIRS_WINDOWS.update({os.path.normcase(windir), os.path.normcase(recovery)})
+            self._prune_dirs = PRUNE_DIRS_WINDOWS
+        elif self.os_type == "Darwin":
+            self._prune_dirs = PRUNE_DIRS_DARWIN
+        else:
+            self._prune_dirs = PRUNE_DIRS_LINUX
 
     def escalate(self, level: str):
         if SEVERITY_ORDER.index(level) > SEVERITY_ORDER.index(self.severity):
@@ -87,14 +104,18 @@ class Scanner:
     # --- Filesystem walking ---
 
     def _should_prune(self, dirpath: str) -> bool:
-        """Skip virtual filesystems, system dirs, and .git."""
-        if dirpath in PRUNE_DIRS:
+        """Skip system dirs that cannot contain node_modules."""
+        normalized = os.path.normcase(dirpath)
+        if normalized in self._prune_dirs:
             return True
-        basename = os.path.basename(dirpath)
-        if basename == ".git":
-            return True
-        # On Linux, skip /proc /sys /dev (virtual fs)
-        if self.os_type == "Linux" and dirpath in ("/proc", "/sys", "/dev", "/run"):
+        # On Windows, also prune anything under the Windows dir
+        # (normcase check above catches the root, this catches subdirs
+        # reached via junction/symlink from outside)
+        if self.os_type == "Windows":
+            windir = os.path.normcase(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+            if normalized.startswith(windir + os.sep):
+                return True
+        if os.path.basename(dirpath) == ".git":
             return True
         return False
 
