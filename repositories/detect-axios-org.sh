@@ -54,6 +54,22 @@ if ! gh auth status &>/dev/null; then
   exit 1
 fi
 
+# --- Check API rate limit ---
+RATE_INFO=$(gh api /rate_limit --jq '[.resources.core.remaining, .resources.core.limit] | @tsv' 2>/dev/null || echo "unknown")
+if [[ "$RATE_INFO" != "unknown" ]]; then
+  RATE_REMAINING=$(echo "$RATE_INFO" | cut -f1)
+  RATE_LIMIT=$(echo "$RATE_INFO" | cut -f2)
+else
+  RATE_REMAINING="unknown"
+  RATE_LIMIT="unknown"
+fi
+
+if [[ "$RATE_REMAINING" != "unknown" && "$RATE_REMAINING" -lt 500 ]]; then
+  echo -e "${YELLOW}[WARN]${RESET} GitHub API rate limit is low: ${RATE_REMAINING}/${RATE_LIMIT} remaining."
+  echo -e "${YELLOW}[WARN]${RESET} Large orgs may exhaust the limit. Consider using a PAT with higher limits."
+  echo ""
+fi
+
 TMPDIR=$(mktemp -d)
 RESULTS_FILE="${TMPDIR}/results.log"
 PROGRESS_FILE="${TMPDIR}/progress.log"
@@ -89,6 +105,34 @@ REPO_COUNT=$(echo "$REPOS" | wc -l | tr -d ' ')
 echo -e "Found ${BOLD}${REPO_COUNT}${RESET} repositories."
 echo ""
 
+# Retry a gh api call with exponential backoff on rate limit (HTTP 403/429)
+gh_api_retry() {
+  local max_retries=3
+  local delay=5
+  local attempt=0
+  local result
+
+  while [[ $attempt -lt $max_retries ]]; do
+    if result=$(gh api "$@" 2>&1); then
+      echo "$result"
+      return 0
+    fi
+
+    if echo "$result" | grep -qE "rate limit|API rate|403|429"; then
+      attempt=$((attempt + 1))
+      echo -e "${YELLOW}[WARN]${RESET} Rate limited, retrying in ${delay}s (attempt ${attempt}/${max_retries})..." >&2
+      sleep "$delay"
+      delay=$((delay * 2))
+    else
+      echo "$result"
+      return 1
+    fi
+  done
+
+  echo "$result"
+  return 1
+}
+
 # --- Scan function for a single repo ---
 scan_repo() {
   local repo="$1"
@@ -98,10 +142,10 @@ scan_repo() {
   if [[ "$BRANCH_MODE" == "all" ]]; then
     while IFS= read -r b; do
       [[ -n "$b" ]] && branches+=("$b")
-    done < <(gh api --paginate "/repos/${repo}/branches" --jq '.[].name' 2>/dev/null || true)
+    done < <(gh_api_retry --paginate "/repos/${repo}/branches" --jq '.[].name' 2>/dev/null || true)
   else
     local default_branch
-    default_branch=$(gh api "/repos/${repo}" --jq '.default_branch' 2>/dev/null || echo "main")
+    default_branch=$(gh_api_retry "/repos/${repo}" --jq '.default_branch' 2>/dev/null || echo "main")
     branches=("$default_branch")
   fi
 
@@ -111,7 +155,7 @@ scan_repo() {
   for branch in "${branches[@]}"; do
     # Use Git Trees API to recursively find all lockfiles and their SHAs
     local tree_data
-    tree_data=$(gh api "/repos/${repo}/git/trees/${branch}?recursive=1" \
+    tree_data=$(gh_api_retry "/repos/${repo}/git/trees/${branch}?recursive=1" \
       --jq '.tree[] | select(.path | test("(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|bun\\.lock|bun\\.lockb)$")) | "\(.sha)\t\(.path)"' \
       2>/dev/null || true)
 
@@ -125,12 +169,12 @@ scan_repo() {
 
       # Download via Contents API (handles auth for private repos)
       local decoded
-      decoded=$(gh api "/repos/${repo}/contents/${lockfile_path}?ref=${branch}" \
+      decoded=$(gh_api_retry "/repos/${repo}/contents/${lockfile_path}?ref=${branch}" \
         --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
 
       # Fallback: for large files (>1MB), content is null — use the cached Blob SHA
       if [[ -z "$decoded" && -n "$blob_sha" ]]; then
-        decoded=$(gh api "/repos/${repo}/git/blobs/${blob_sha}" \
+        decoded=$(gh_api_retry "/repos/${repo}/git/blobs/${blob_sha}" \
           --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
       fi
 
@@ -214,7 +258,7 @@ scan_repo() {
   echo -e "[${done_count}/${REPO_COUNT}] ${BOLD}${repo_short}${RESET} — ${detail}" >&2
 }
 
-export -f scan_repo
+export -f scan_repo gh_api_retry
 export RED YELLOW GREEN BOLD DIM RESET
 export COMPROMISED_VERSION MALICIOUS_DEP BRANCH_MODE REPO_COUNT
 export RESULTS_FILE PROGRESS_FILE
