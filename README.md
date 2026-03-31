@@ -1,6 +1,6 @@
 # axios-detect
 
-Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-supply-chain-attack) targeting `axios@1.14.1` which pulls in `plain-crypto-js@4.2.1`, a confirmed malicious package.
+Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` which pulls in `plain-crypto-js@4.2.1`, a confirmed malicious package.
 
 ## What it detects
 
