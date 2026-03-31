@@ -102,9 +102,10 @@ sys.exit(0)
       ;;
 
     yarn.lock)
-      # Yarn classic & berry format
-      if grep -qE "axios@.*:" "$file" 2>/dev/null; then
-        if grep -A2 "axios@" "$file" 2>/dev/null | grep -q "version \"${COMPROMISED_VERSION}\""; then
+      # Yarn classic: "axios@^x.y.z:" followed by "  version "x.y.z"" within 5 lines
+      # Yarn berry: "axios@npm:x.y.z:" with "  version: x.y.z" within 5 lines
+      if grep -qE "^\"?axios@" "$file" 2>/dev/null; then
+        if grep -A5 "^\"*axios@" "$file" 2>/dev/null | grep -qE "version:?\s+\"?${COMPROMISED_VERSION}\"?"; then
           log_alert "axios@${COMPROMISED_VERSION} in lockfile: ${file}"
           hit=1
         fi
