@@ -3,7 +3,11 @@
 Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` and `axios@0.30.4` which pull in `plain-crypto-js@4.2.1`, a confirmed malicious package.
 
 ```bash
+# Linux / macOS
 ./locally/detect-axios.sh
+
+# Any platform (Linux, macOS, Windows) — requires Python 3
+python3 locally/detect-axios.py
 ```
 
 This scans your entire machine. No arguments needed.
@@ -22,7 +26,7 @@ Supported lockfiles: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lo
 
 ## Scripts
 
-### Local filesystem scan
+### Local filesystem scan (bash)
 
 Scans a directory tree for installed `node_modules`, lockfiles, and OS-level execution artifacts.
 
@@ -34,6 +38,22 @@ Requires: `find`, `grep` (mandatory); `python3`, `pgrep`, `ss`/`lsof`, `journalc
 
 # Scan the entire disk
 ./locally/detect-axios.sh /
+```
+
+### Local filesystem scan (Python -- cross-platform)
+
+Same detection as the bash version, but runs on Linux, macOS, and Windows. Zero external dependencies -- Python 3 standard library only.
+
+```bash
+# Scan the entire machine (default)
+python3 locally/detect-axios.py
+
+# Scan a specific directory
+python3 locally/detect-axios.py ~/projects/my-app
+
+# Windows
+python locally\detect-axios.py
+python locally\detect-axios.py C:\Users\me\projects
 ```
 
 If any compromise indicators are found, the script writes a JSON report to the current directory with a unique filename (e.g. `axios-scan-myhostname-20260331-120000.json`). No JSON file is produced if the scan is clean.
