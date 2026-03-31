@@ -12,14 +12,36 @@ jobs:
     strategy:
       matrix:
         include:
+          # CLI scanner
           - os: ubuntu-latest
+            script: locally/detect-axios.py
             artifact: detect-axios-linux-amd64
           - os: macos-13
+            script: locally/detect-axios.py
             artifact: detect-axios-darwin-amd64
           - os: macos-latest
+            script: locally/detect-axios.py
             artifact: detect-axios-darwin-arm64
           - os: windows-latest
+            script: locally/detect-axios.py
             artifact: detect-axios-windows-amd64
+          # GUI scanner
+          - os: ubuntu-latest
+            script: locally/detect-axios-gui.py
+            artifact: detect-axios-gui-linux-amd64
+            extra_args: --add-data "locally/detect-axios.py:." --hidden-import detect_axios
+          - os: macos-13
+            script: locally/detect-axios-gui.py
+            artifact: detect-axios-gui-darwin-amd64
+            extra_args: --add-data "locally/detect-axios.py:." --hidden-import detect_axios --windowed
+          - os: macos-latest
+            script: locally/detect-axios-gui.py
+            artifact: detect-axios-gui-darwin-arm64
+            extra_args: --add-data "locally/detect-axios.py:." --hidden-import detect_axios --windowed
+          - os: windows-latest
+            script: locally/detect-axios-gui.py
+            artifact: detect-axios-gui-windows-amd64
+            extra_args: --add-data "locally/detect-axios.py;." --hidden-import detect_axios --windowed
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +54,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build binary
-        run: pyinstaller --onefile locally/detect-axios.py --name ${{ matrix.artifact }}
+        run: pyinstaller --onefile ${{ matrix.script }} --name ${{ matrix.artifact }} ${{ matrix.extra_args || '' }}
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
