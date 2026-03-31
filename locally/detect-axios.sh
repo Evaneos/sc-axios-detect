@@ -71,12 +71,13 @@ while IFS= read -r pkg_json; do
     escalate_severity "LATENT"
   fi
 done < <(find "$ROOT" \
-  -not -path '/proc/*' \
-  -not -path '/sys/*' \
-  -not -path '/dev/*' \
-  -not -path '/run/*' \
-  -path '*/node_modules/axios/package.json' \
-  -not -path '*/node_modules/*/node_modules/axios/package.json' \
+  \( -fstype proc -o -fstype sysfs -o -fstype devtmpfs -o -fstype devpts \
+     -o -fstype tmpfs -o -fstype cgroup -o -fstype cgroup2 \
+     -o -fstype fuse -o -fstype fuse.gvfsd-fuse \
+     -o -fstype nfs -o -fstype nfs4 -o -fstype cifs \) -prune \
+  -o -path '*/node_modules/axios/package.json' \
+     -not -path '*/node_modules/*/node_modules/axios/package.json' \
+     -print \
   2>/dev/null || true)
 
 # --- 2. Scan lockfiles ---
@@ -187,16 +188,17 @@ sys.exit(rc)
 while IFS= read -r lockfile; do
   scan_lockfile "$lockfile" || true
 done < <(find "$ROOT" \
-  -not -path '/proc/*' \
-  -not -path '/sys/*' \
-  -not -path '/dev/*' \
-  -not -path '/run/*' \
-  \( -name 'package-lock.json' \
-     -o -name 'yarn.lock' \
-     -o -name 'pnpm-lock.yaml' \
-     -o -name 'bun.lock' \
-     -o -name 'bun.lockb' \) \
-  -not -path '*/node_modules/*' \
+  \( -fstype proc -o -fstype sysfs -o -fstype devtmpfs -o -fstype devpts \
+     -o -fstype tmpfs -o -fstype cgroup -o -fstype cgroup2 \
+     -o -fstype fuse -o -fstype fuse.gvfsd-fuse \
+     -o -fstype nfs -o -fstype nfs4 -o -fstype cifs \) -prune \
+  -o \( -name 'package-lock.json' \
+        -o -name 'yarn.lock' \
+        -o -name 'pnpm-lock.yaml' \
+        -o -name 'bun.lock' \
+        -o -name 'bun.lockb' \) \
+     -not -path '*/node_modules/*' \
+     -print \
   2>/dev/null || true)
 
 # --- 3. Check for malicious package installation ---
@@ -206,11 +208,11 @@ while IFS= read -r mal_pkg; do
   log_alert "Malicious package installed: ${mal_pkg}"
   escalate_severity "INSTALLED"
 done < <(find "$ROOT" \
-  -not -path '/proc/*' \
-  -not -path '/sys/*' \
-  -not -path '/dev/*' \
-  -not -path '/run/*' \
-  -path "*node_modules/${MALICIOUS_DEP}/package.json" \
+  \( -fstype proc -o -fstype sysfs -o -fstype devtmpfs -o -fstype devpts \
+     -o -fstype tmpfs -o -fstype cgroup -o -fstype cgroup2 \
+     -o -fstype fuse -o -fstype fuse.gvfsd-fuse \
+     -o -fstype nfs -o -fstype nfs4 -o -fstype cifs \) -prune \
+  -o -path "*node_modules/${MALICIOUS_DEP}/package.json" -print \
   2>/dev/null || true)
 
 # --- 4. Scan for execution artifacts ---
