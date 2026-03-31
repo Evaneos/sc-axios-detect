@@ -69,25 +69,24 @@ scan_lockfile() {
 
   case "$basename" in
     package-lock.json)
-      # JSON format: look for axios version and plain-crypto-js
-      if grep -qE "\"axios\".*\"${COMPROMISED_VERSION}\"" "$file" 2>/dev/null || \
-         grep -qE "\"node_modules/axios\"" "$file" 2>/dev/null && \
-         grep -qE "\"version\"\s*:\s*\"${COMPROMISED_VERSION}\"" "$file" 2>/dev/null; then
-        # More precise check: extract axios version block
+      # JSON format: use Python for precise parsing
+      if grep -q "axios" "$file" 2>/dev/null; then
         if python3 -c "
 import json, sys
+file_path, target_version, malicious_dep = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
-    with open('$file') as f:
+    with open(file_path) as f:
         lock = json.load(f)
     pkgs = lock.get('packages', lock.get('dependencies', {}))
     for key, val in pkgs.items():
-        if 'axios' in key and val.get('version') == '${COMPROMISED_VERSION}':
+        if 'axios' in key and val.get('version') == target_version:
             sys.exit(1)
-        if '${MALICIOUS_DEP}' in key:
+        if malicious_dep in key:
             sys.exit(2)
-except: pass
+except Exception:
+    pass
 sys.exit(0)
-" 2>/dev/null; then
+" "$file" "$COMPROMISED_VERSION" "$MALICIOUS_DEP" 2>/dev/null; then
           : # clean
         else
           local rc=$?
