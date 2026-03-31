@@ -2,6 +2,12 @@
 
 Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` and `axios@0.30.4` which pull in `plain-crypto-js@4.2.1`, a confirmed malicious package.
 
+```bash
+./locally/detect-axios.sh
+```
+
+This scans your entire machine. No arguments needed.
+
 ## What it detects
 
 - `axios@1.14.1` and `axios@0.30.4` referenced in any lockfile or installed in `node_modules`
