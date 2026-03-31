@@ -72,12 +72,12 @@ if [[ "$RATE_REMAINING" != "unknown" && "$RATE_REMAINING" -lt 500 ]]; then
   echo ""
 fi
 
-TMPDIR=$(mktemp -d)
-RESULTS_FILE="${TMPDIR}/results.log"
-PROGRESS_FILE="${TMPDIR}/progress.log"
+SCAN_TMPDIR=$(mktemp -d)
+RESULTS_FILE="${SCAN_TMPDIR}/results.log"
+PROGRESS_FILE="${SCAN_TMPDIR}/progress.log"
 touch "$RESULTS_FILE" "$PROGRESS_FILE"
 
-cleanup() { rm -rf "$TMPDIR"; }
+cleanup() { rm -rf "$SCAN_TMPDIR"; }
 trap cleanup EXIT
 
 echo -e "${BOLD}=== Axios Supply Chain Scanner (GitHub Org) ===${RESET}"
@@ -122,25 +122,30 @@ gh_api_retry() {
   local delay=5
   local attempt=0
   local result
+  local stderr_file
+  stderr_file=$(mktemp)
 
   while [[ $attempt -lt $max_retries ]]; do
-    if result=$(gh api "$@" 2>&1); then
+    if result=$(gh api "$@" 2>"$stderr_file"); then
       echo "$result"
+      rm -f "$stderr_file"
       return 0
     fi
 
-    if echo "$result" | grep -qE "rate limit|API rate|403|429"; then
+    if grep -qE "rate limit|API rate|403|429" "$stderr_file" 2>/dev/null; then
       attempt=$((attempt + 1))
       echo -e "${YELLOW}[WARN]${RESET} Rate limited, retrying in ${delay}s (attempt ${attempt}/${max_retries})..." >&2
       sleep "$delay"
       delay=$((delay * 2))
     else
       echo "$result"
+      rm -f "$stderr_file"
       return 1
     fi
   done
 
   echo "$result"
+  rm -f "$stderr_file"
   return 1
 }
 
@@ -178,7 +183,7 @@ scan_repo() {
     while IFS=$'\t' read -r blob_sha lockfile_path; do
       [[ -z "$lockfile_path" ]] && continue
 
-      local tmpfile="${TMPDIR}/decoded_$$_${RANDOM}"
+      local tmpfile="${SCAN_TMPDIR}/decoded_$$_${RANDOM}"
 
       # Download via Contents API (handles auth for private repos)
       gh_api_retry "/repos/${repo}/contents/${lockfile_path}?ref=${branch}" \
@@ -212,7 +217,7 @@ scan_repo() {
           fi
           ;;
         yarn.lock)
-          if grep -A3 '^"*axios@' "$tmpfile" 2>/dev/null | grep -q "version \"${COMPROMISED_VERSION}\""; then
+          if grep -A5 '^"*axios@' "$tmpfile" 2>/dev/null | grep -qE "version:?\s+\"?${COMPROMISED_VERSION}\"?"; then
             found_axios=true
           fi
           ;;
@@ -277,7 +282,7 @@ export -f scan_repo gh_api_retry
 export RED YELLOW GREEN BOLD DIM RESET
 export INCLUDE_ARCHIVED INCLUDE_FORKS
 export COMPROMISED_VERSION MALICIOUS_DEP BRANCH_MODE REPO_COUNT
-export RESULTS_FILE PROGRESS_FILE
+export SCAN_TMPDIR RESULTS_FILE PROGRESS_FILE
 # --- Run in parallel ---
 echo -e "${BOLD}Scanning repositories (${PARALLEL} parallel workers)...${RESET}"
 echo ""
