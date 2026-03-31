@@ -148,14 +148,45 @@ scan_repo() {
       has_any_lockfile=true
       local file_status="clean"
 
-      # Check for compromised version
-      if echo "$decoded" | grep -qE "axios.*${COMPROMISED_VERSION}|\"axios\"\s*:\s*\".*${COMPROMISED_VERSION}"; then
+      local lockfile_basename
+      lockfile_basename=$(basename "$lockfile_path")
+
+      local found_axios=false found_dep=false
+
+      case "$lockfile_basename" in
+        package-lock.json)
+          if echo "$decoded" | grep -qE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\""; then
+            found_axios=true
+          fi
+          ;;
+        yarn.lock)
+          if echo "$decoded" | grep -A3 '^"*axios@' | grep -q "version \"${COMPROMISED_VERSION}\""; then
+            found_axios=true
+          fi
+          ;;
+        pnpm-lock.yaml)
+          if echo "$decoded" | grep -qE "['\"]/axios/${COMPROMISED_VERSION}['\"]|axios:\s+${COMPROMISED_VERSION}"; then
+            found_axios=true
+          fi
+          ;;
+        bun.lock|bun.lockb)
+          if echo "$decoded" | grep -qaE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\""; then
+            found_axios=true
+          fi
+          ;;
+      esac
+
+      # Malicious dep check — simple substring match is fine, the package name is unique enough
+      if echo "$decoded" | grep -q "${MALICIOUS_DEP}"; then
+        found_dep=true
+      fi
+
+      if [[ "$found_axios" == true ]]; then
         echo -e "${RED}[ALERT]${RESET} axios@${COMPROMISED_VERSION} in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}" | tee -a "$RESULTS_FILE"
         file_status="COMPROMISED"
       fi
 
-      # Check for malicious dependency
-      if echo "$decoded" | grep -q "${MALICIOUS_DEP}"; then
+      if [[ "$found_dep" == true ]]; then
         echo -e "${RED}[ALERT]${RESET} ${MALICIOUS_DEP} in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}" | tee -a "$RESULTS_FILE"
         file_status="COMPROMISED"
       fi
