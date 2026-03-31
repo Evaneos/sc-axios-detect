@@ -109,34 +109,29 @@ scan_repo() {
   local has_any_lockfile=false
 
   for branch in "${branches[@]}"; do
-    # Use Git Trees API to recursively find all lockfiles in the repo
-    local lockfile_paths
-    lockfile_paths=$(gh api "/repos/${repo}/git/trees/${branch}?recursive=1" \
-      --jq '.tree[].path' 2>/dev/null \
-      | grep -E '(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lock|bun\.lockb)$' \
-      || true)
+    # Use Git Trees API to recursively find all lockfiles and their SHAs
+    local tree_data
+    tree_data=$(gh api "/repos/${repo}/git/trees/${branch}?recursive=1" \
+      --jq '.tree[] | select(.path | test("(package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|bun\\.lock|bun\\.lockb)$")) | "\(.sha)\t\(.path)"' \
+      2>/dev/null || true)
 
-    if [[ -z "$lockfile_paths" ]]; then
+    if [[ -z "$tree_data" ]]; then
       continue
     fi
 
-    while IFS= read -r lockfile_path; do
+    local blob_sha lockfile_path
+    while IFS=$'\t' read -r blob_sha lockfile_path; do
       [[ -z "$lockfile_path" ]] && continue
 
-      # Download via gh api (handles auth for private repos)
+      # Download via Contents API (handles auth for private repos)
       local decoded
       decoded=$(gh api "/repos/${repo}/contents/${lockfile_path}?ref=${branch}" \
         --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
 
-      # Fallback: for large files (>1MB), content is null — use the Blob API
-      if [[ -z "$decoded" ]]; then
-        local blob_sha
-        blob_sha=$(gh api "/repos/${repo}/git/trees/${branch}?recursive=1" \
-          --jq ".tree[] | select(.path == \"${lockfile_path}\") | .sha" 2>/dev/null || true)
-        if [[ -n "$blob_sha" ]]; then
-          decoded=$(gh api "/repos/${repo}/git/blobs/${blob_sha}" \
-            --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
-        fi
+      # Fallback: for large files (>1MB), content is null — use the cached Blob SHA
+      if [[ -z "$decoded" && -n "$blob_sha" ]]; then
+        decoded=$(gh api "/repos/${repo}/git/blobs/${blob_sha}" \
+          --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
       fi
 
       if [[ -z "$decoded" ]]; then
@@ -201,7 +196,7 @@ scan_repo() {
       else
         scanned_lockfiles+=("${lockfile_path}: ${file_status}")
       fi
-    done <<< "$lockfile_paths"
+    done <<< "$tree_data"
   done
 
   echo "${repo}" >> "$PROGRESS_FILE"
