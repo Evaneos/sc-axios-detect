@@ -19,8 +19,6 @@ RESET='\033[0m'
 
 COMPROMISED_VERSION="1.14.1"
 MALICIOUS_DEP="plain-crypto-js"
-LOCKFILES=("package-lock.json" "yarn.lock" "pnpm-lock.yaml" "bun.lock" "bun.lockb")
-
 PARALLEL=10
 BRANCH_MODE="default"  # "default" = default branch only, "all" = all branches
 INCLUDE_ARCHIVED=false
@@ -280,22 +278,11 @@ export RED YELLOW GREEN BOLD DIM RESET
 export INCLUDE_ARCHIVED INCLUDE_FORKS
 export COMPROMISED_VERSION MALICIOUS_DEP BRANCH_MODE REPO_COUNT
 export RESULTS_FILE PROGRESS_FILE
-export LOCKFILES_STR="${LOCKFILES[*]}"
-
-# Re-export LOCKFILES inside the function (bash can't export arrays)
-# Wrap scan_repo to reconstruct the array
-scan_repo_wrapper() {
-  IFS=' ' read -ra LOCKFILES <<< "$LOCKFILES_STR"
-  export LOCKFILES
-  scan_repo "$1"
-}
-export -f scan_repo_wrapper
-
 # --- Run in parallel ---
 echo -e "${BOLD}Scanning repositories (${PARALLEL} parallel workers)...${RESET}"
 echo ""
 
-echo "$REPOS" | xargs -P "$PARALLEL" -I {} bash -c 'scan_repo_wrapper "$@"' _ {}
+echo "$REPOS" | xargs -P "$PARALLEL" -I {} bash -c 'scan_repo "$@"' _ {}
 
 # --- Summary ---
 echo ""
