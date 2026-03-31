@@ -180,20 +180,22 @@ scan_repo() {
     while IFS=$'\t' read -r blob_sha lockfile_path; do
       [[ -z "$lockfile_path" ]] && continue
 
+      local tmpfile="${TMPDIR}/decoded_$$_${RANDOM}"
+
       # Download via Contents API (handles auth for private repos)
-      local decoded
-      decoded=$(gh_api_retry "/repos/${repo}/contents/${lockfile_path}?ref=${branch}" \
-        --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
+      gh_api_retry "/repos/${repo}/contents/${lockfile_path}?ref=${branch}" \
+        --jq '.content // empty' 2>/dev/null | base64 -d > "$tmpfile" 2>/dev/null || true
 
       # Fallback: for large files (>1MB), content is null — use the cached Blob SHA
-      if [[ -z "$decoded" && -n "$blob_sha" ]]; then
-        decoded=$(gh_api_retry "/repos/${repo}/git/blobs/${blob_sha}" \
-          --jq '.content // empty' 2>/dev/null | base64 -d 2>/dev/null || true)
+      if [[ ! -s "$tmpfile" && -n "$blob_sha" ]]; then
+        gh_api_retry "/repos/${repo}/git/blobs/${blob_sha}" \
+          --jq '.content // empty' 2>/dev/null | base64 -d > "$tmpfile" 2>/dev/null || true
       fi
 
-      if [[ -z "$decoded" ]]; then
+      if [[ ! -s "$tmpfile" ]]; then
         scanned_lockfiles+=("${lockfile_path}@${branch}: download failed")
         has_any_lockfile=true
+        rm -f "$tmpfile"
         continue
       fi
 
@@ -207,29 +209,29 @@ scan_repo() {
 
       case "$lockfile_basename" in
         package-lock.json)
-          if echo "$decoded" | grep -qE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\""; then
+          if grep -qE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\"" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
         yarn.lock)
-          if echo "$decoded" | grep -A3 '^"*axios@' | grep -q "version \"${COMPROMISED_VERSION}\""; then
+          if grep -A3 '^"*axios@' "$tmpfile" 2>/dev/null | grep -q "version \"${COMPROMISED_VERSION}\""; then
             found_axios=true
           fi
           ;;
         pnpm-lock.yaml)
-          if echo "$decoded" | grep -qE "['\"]/axios/${COMPROMISED_VERSION}['\"]|axios:\s+${COMPROMISED_VERSION}"; then
+          if grep -qE "['\"]/axios/${COMPROMISED_VERSION}['\"]|axios:\s+${COMPROMISED_VERSION}" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
         bun.lock|bun.lockb)
-          if echo "$decoded" | grep -qaE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\""; then
+          if grep -qaE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\"" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
       esac
 
       # Malicious dep check — simple substring match is fine, the package name is unique enough
-      if echo "$decoded" | grep -q "${MALICIOUS_DEP}"; then
+      if grep -q "${MALICIOUS_DEP}" "$tmpfile" 2>/dev/null; then
         found_dep=true
       fi
 
@@ -245,7 +247,7 @@ scan_repo() {
 
       # Report what we found
       if [[ "$file_status" == "clean" ]]; then
-        if echo "$decoded" | grep -q "axios"; then
+        if grep -q "axios" "$tmpfile" 2>/dev/null; then
           scanned_lockfiles+=("${lockfile_path}: axios OK")
         else
           scanned_lockfiles+=("${lockfile_path}: no axios")
@@ -253,6 +255,8 @@ scan_repo() {
       else
         scanned_lockfiles+=("${lockfile_path}: ${file_status}")
       fi
+
+      rm -f "$tmpfile"
     done <<< "$tree_data"
   done
 
