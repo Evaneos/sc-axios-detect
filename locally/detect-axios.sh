@@ -71,6 +71,10 @@ while IFS= read -r pkg_json; do
     escalate_severity "LATENT"
   fi
 done < <(find "$ROOT" \
+  -not -path '/proc/*' \
+  -not -path '/sys/*' \
+  -not -path '/dev/*' \
+  -not -path '/run/*' \
   -path '*/node_modules/axios/package.json' \
   -not -path '*/node_modules/*/node_modules/axios/package.json' \
   2>/dev/null || true)
@@ -183,6 +187,10 @@ sys.exit(rc)
 while IFS= read -r lockfile; do
   scan_lockfile "$lockfile" || true
 done < <(find "$ROOT" \
+  -not -path '/proc/*' \
+  -not -path '/sys/*' \
+  -not -path '/dev/*' \
+  -not -path '/run/*' \
   \( -name 'package-lock.json' \
      -o -name 'yarn.lock' \
      -o -name 'pnpm-lock.yaml' \
@@ -198,6 +206,10 @@ while IFS= read -r mal_pkg; do
   log_alert "Malicious package installed: ${mal_pkg}"
   escalate_severity "INSTALLED"
 done < <(find "$ROOT" \
+  -not -path '/proc/*' \
+  -not -path '/sys/*' \
+  -not -path '/dev/*' \
+  -not -path '/run/*' \
   -path "*node_modules/${MALICIOUS_DEP}/package.json" \
   2>/dev/null || true)
 
