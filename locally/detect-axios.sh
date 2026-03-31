@@ -88,29 +88,32 @@ scan_lockfile() {
     package-lock.json)
       # JSON format: use Python for precise parsing
       if grep -q "axios" "$file" 2>/dev/null; then
+        # Exit codes: 0=clean, 1=axios only, 2=malicious dep only, 3=both
         if python3 -c "
 import json, sys
 file_path, versions, malicious_dep = sys.argv[1], sys.argv[2].split(','), sys.argv[3]
+rc = 0
 try:
     with open(file_path) as f:
         lock = json.load(f)
     pkgs = lock.get('packages', lock.get('dependencies', {}))
     for key, val in pkgs.items():
         if 'axios' in key and val.get('version') in versions:
-            sys.exit(1)
+            rc |= 1
         if malicious_dep in key:
-            sys.exit(2)
+            rc |= 2
 except Exception:
     pass
-sys.exit(0)
+sys.exit(rc)
 " "$file" "${COMPROMISED_VERSION},${COMPROMISED_VERSION_0X}" "$MALICIOUS_DEP" 2>/dev/null; then
           : # clean
         else
           local rc=$?
-          if [[ $rc -eq 1 ]]; then
+          if (( rc & 1 )); then
             log_alert "Compromised axios version in lockfile: ${file}"
             hit=1
-          elif [[ $rc -eq 2 ]]; then
+          fi
+          if (( rc & 2 )); then
             log_alert "'${MALICIOUS_DEP}' in lockfile: ${file}"
             hit=1
           fi
@@ -132,7 +135,8 @@ sys.exit(0)
       ;;
 
     pnpm-lock.yaml)
-      if grep -qE "axios.*(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
+      # pnpm format: '/axios/1.14.1' or 'axios: 1.14.1'
+      if grep -qE "['\"]/axios/(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})['\"]|axios:\s+(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
         log_alert "Compromised axios version in lockfile: ${file}"
         hit=1
       fi
@@ -143,7 +147,8 @@ sys.exit(0)
       ;;
 
     bun.lock|bun.lockb)
-      if grep -qaE "axios.*(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
+      # bun.lock is JSONC, bun.lockb is binary — use format-specific pattern
+      if grep -qaE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$file" 2>/dev/null; then
         log_alert "Compromised axios version in lockfile: ${file}"
         hit=1
       fi

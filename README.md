@@ -1,11 +1,12 @@
 # axios-detect
 
-Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` which pulls in `plain-crypto-js@4.2.1`, a confirmed malicious package.
+Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` and `axios@0.30.4` which pull in `plain-crypto-js@4.2.1`, a confirmed malicious package.
 
 ## What it detects
 
-- `axios@1.14.1` referenced in any lockfile
+- `axios@1.14.1` and `axios@0.30.4` referenced in any lockfile
 - `plain-crypto-js` dependency (the malicious dropper)
+- OS-level execution artifacts (local scanner only)
 
 Supported lockfiles: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`
 

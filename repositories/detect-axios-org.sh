@@ -239,13 +239,20 @@ scan_repo() {
         found_dep=true
       fi
 
+      # Use per-worker result file to avoid parallel write interleaving
+      local worker_results="${SCAN_TMPDIR}/results_${BASHPID}.log"
+
       if [[ "$found_axios" == true ]]; then
-        echo -e "${RED}[ALERT]${RESET} Compromised axios in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}" | tee -a "$RESULTS_FILE"
+        local msg="${RED}[ALERT]${RESET} Compromised axios in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}"
+        echo -e "$msg" >> "$worker_results"
+        echo -e "$msg"
         file_status="COMPROMISED"
       fi
 
       if [[ "$found_dep" == true ]]; then
-        echo -e "${RED}[ALERT]${RESET} ${MALICIOUS_DEP} in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}" | tee -a "$RESULTS_FILE"
+        local msg="${RED}[ALERT]${RESET} ${MALICIOUS_DEP} in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}"
+        echo -e "$msg" >> "$worker_results"
+        echo -e "$msg"
         file_status="COMPROMISED"
       fi
 
@@ -281,7 +288,6 @@ scan_repo() {
 
 export -f scan_repo gh_api_retry
 export RED YELLOW GREEN BOLD DIM RESET
-export INCLUDE_ARCHIVED INCLUDE_FORKS
 export COMPROMISED_VERSION COMPROMISED_VERSION_0X MALICIOUS_DEP BRANCH_MODE REPO_COUNT
 export SCAN_TMPDIR RESULTS_FILE PROGRESS_FILE
 # --- Run in parallel ---
@@ -289,6 +295,9 @@ echo -e "${BOLD}Scanning repositories (${PARALLEL} parallel workers)...${RESET}"
 echo ""
 
 echo "$REPOS" | xargs -P "$PARALLEL" -I {} bash -c 'scan_repo "$@"' _ {}
+
+# Merge per-worker result files into a single results file
+cat "${SCAN_TMPDIR}"/results_*.log >> "$RESULTS_FILE" 2>/dev/null || true
 
 # --- Summary & Guidance ---
 echo ""
