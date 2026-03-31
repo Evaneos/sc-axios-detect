@@ -230,10 +230,9 @@ sys.exit(rc)
       ;;
 
     bun.lockb)
-      # bun.lockb is binary — strings are stored separately, not as JSON
-      # Check that both "axios" and the compromised version appear in the file
-      if grep -qa "axios" "$file" 2>/dev/null && \
-         grep -qaE "(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$file" 2>/dev/null; then
+      # bun.lockb is binary — match the npm tarball URL to tie package name to version
+      # avoids false positives from unrelated packages (e.g. tslib@1.14.1)
+      if strings "$file" 2>/dev/null | grep -qE "axios/-/axios-(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\.tgz"; then
         log_alert "Compromised axios version in lockfile: ${file}"
         record_finding "lockfile" "compromised_axios" "axios" "$file"
         hit=1
