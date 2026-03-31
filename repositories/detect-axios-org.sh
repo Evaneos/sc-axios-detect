@@ -6,7 +6,7 @@
 # Requires: gh CLI (authenticated)
 #
 # Scans package-lock.json, yarn.lock, pnpm-lock.yaml, bun.lock in every repo
-# of the given GitHub organization, looking for axios@1.14.1 or plain-crypto-js.
+# of the given GitHub organization, looking for axios@1.14.1, axios@0.30.4, or plain-crypto-js.
 
 set -euo pipefail
 
@@ -18,6 +18,7 @@ DIM='\033[2m'
 RESET='\033[0m'
 
 COMPROMISED_VERSION="1.14.1"
+COMPROMISED_VERSION_0X="0.30.4"
 MALICIOUS_DEP="plain-crypto-js"
 PARALLEL=10
 BRANCH_MODE="default"  # "default" = default branch only, "all" = all branches
@@ -84,7 +85,7 @@ echo -e "${BOLD}=== Axios Supply Chain Scanner (GitHub Org) ===${RESET}"
 echo "Organization: ${ORG}"
 echo "Parallelism:  ${PARALLEL}"
 echo "Branch mode:  ${BRANCH_MODE}"
-echo "Looking for:  axios@${COMPROMISED_VERSION} / ${MALICIOUS_DEP}"
+echo "Looking for:  axios@${COMPROMISED_VERSION} / axios@${COMPROMISED_VERSION_0X} / ${MALICIOUS_DEP}"
 echo ""
 
 # --- List all repos ---
@@ -212,22 +213,22 @@ scan_repo() {
 
       case "$lockfile_basename" in
         package-lock.json)
-          if grep -qE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\"" "$tmpfile" 2>/dev/null; then
+          if grep -qE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
         yarn.lock)
-          if grep -A5 '^"*axios@' "$tmpfile" 2>/dev/null | grep -qE "version:?\s+\"?${COMPROMISED_VERSION}\"?"; then
+          if grep -A5 '^"*axios@' "$tmpfile" 2>/dev/null | grep -qE "version:?\s+\"?(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"?"; then
             found_axios=true
           fi
           ;;
         pnpm-lock.yaml)
-          if grep -qE "['\"]/axios/${COMPROMISED_VERSION}['\"]|axios:\s+${COMPROMISED_VERSION}" "$tmpfile" 2>/dev/null; then
+          if grep -qE "['\"]/axios/(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})['\"]|axios:\s+(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
         bun.lock|bun.lockb)
-          if grep -qaE "\"axios\"[^}]*\"${COMPROMISED_VERSION}\"" "$tmpfile" 2>/dev/null; then
+          if grep -qaE "\"axios\"[^}]*\"(${COMPROMISED_VERSION}|${COMPROMISED_VERSION_0X})\"" "$tmpfile" 2>/dev/null; then
             found_axios=true
           fi
           ;;
@@ -239,7 +240,7 @@ scan_repo() {
       fi
 
       if [[ "$found_axios" == true ]]; then
-        echo -e "${RED}[ALERT]${RESET} axios@${COMPROMISED_VERSION} in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}" | tee -a "$RESULTS_FILE"
+        echo -e "${RED}[ALERT]${RESET} Compromised axios in ${BOLD}${repo}${RESET} @ ${branch} — ${lockfile_path}" | tee -a "$RESULTS_FILE"
         file_status="COMPROMISED"
       fi
 
@@ -281,7 +282,7 @@ scan_repo() {
 export -f scan_repo gh_api_retry
 export RED YELLOW GREEN BOLD DIM RESET
 export INCLUDE_ARCHIVED INCLUDE_FORKS
-export COMPROMISED_VERSION MALICIOUS_DEP BRANCH_MODE REPO_COUNT
+export COMPROMISED_VERSION COMPROMISED_VERSION_0X MALICIOUS_DEP BRANCH_MODE REPO_COUNT
 export SCAN_TMPDIR RESULTS_FILE PROGRESS_FILE
 # --- Run in parallel ---
 echo -e "${BOLD}Scanning repositories (${PARALLEL} parallel workers)...${RESET}"
@@ -289,7 +290,7 @@ echo ""
 
 echo "$REPOS" | xargs -P "$PARALLEL" -I {} bash -c 'scan_repo "$@"' _ {}
 
-# --- Summary ---
+# --- Summary & Guidance ---
 echo ""
 echo -e "${BOLD}=== Scan Complete ===${RESET}"
 
@@ -299,8 +300,47 @@ if [[ $ALERT_COUNT -gt 0 ]]; then
   echo ""
   echo -e "${BOLD}Details:${RESET}"
   cat "$RESULTS_FILE"
+  echo ""
+  echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
+  echo -e "${RED}${BOLD} NEXT STEPS${RESET}"
+  echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
+  echo ""
+  echo -e " ${BOLD}TL;DR:${RESET} Compromised lockfile(s) detected. Remediate the code and verify"
+  echo "  all environments where these repositories were cloned or deployed."
+  echo ""
+  echo -e " ${BOLD}Code remediation (for each affected repo):${RESET}"
+  echo ""
+  echo "  1. Pin axios to a safe version in package.json (1.14.0 for 1.x, 0.30.3 for 0.x)"
+  echo "  2. Delete the compromised lockfile and node_modules/"
+  echo "  3. Run a fresh install to regenerate a clean lockfile"
+  echo "  4. Verify \"plain-crypto-js\" does NOT appear in the new lockfile"
+  echo "  5. Commit and push the fix"
+  echo ""
+  echo -e " ${BOLD}Environment verification:${RESET}"
+  echo ""
+  echo "  6. Run the local scanner on every dev machine that cloned the affected repo(s):"
+  echo "     ./locally/detect-axios.sh /path/to/repo"
+  echo ""
+  echo "  7. Check CI/CD: if a pipeline ran \"install\" with the compromised lockfile,"
+  echo "     the runner may have been infected. Review CI logs and rotate CI secrets."
+  echo ""
+  echo "  8. Check staging/production: if a deployment occurred with this version,"
+  echo "     those environments need investigation. Rotate deployed secrets."
+  echo ""
+  echo "  9. If the local scanner reports INSTALLED or CONFIRMED severity:"
+  echo "     rotate ALL secrets accessible from the affected environments and"
+  echo "     alert your security team."
+  echo ""
+  echo "  The malicious versions have been removed from npm, but any lockfile still"
+  echo "  referencing them will reinstall the compromised version."
+  echo ""
+  echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent"
+  echo "  future supply chain attacks from silently upgrading to compromised versions."
   exit 1
 else
   echo -e "${GREEN}[OK]${RESET} No compromised axios versions or malicious dependencies detected in ${ORG}."
+  echo ""
+  echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent"
+  echo "  supply chain attacks from silently upgrading to compromised versions."
   exit 0
 fi
