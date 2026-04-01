@@ -23,14 +23,14 @@ chmod +x detect-axios-darwin-amd64
 detect-axios-windows-amd64.exe
 ```
 
-**From source** (requires Python 3, no other dependencies):
+**From source**:
 
 ```bash
 # Linux / macOS
-./locally/detect-axios.sh
+./locally/detect-axios.sh # No Python 3
 
 # Any platform (Linux, macOS, Windows)
-python3 locally/detect-axios.py
+python3 locally/detect-axios.py # Requires Python 3, no other dependencies
 ```
 
 This scans your entire machine. No arguments needed.
