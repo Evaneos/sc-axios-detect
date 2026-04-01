@@ -1,0 +1,84 @@
+name: Build release binaries
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build-cli:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: detect-axios-linux-amd64
+          - os: macos-13
+            artifact: detect-axios-darwin-amd64
+          - os: macos-latest
+            artifact: detect-axios-darwin-arm64
+          - os: windows-latest
+            artifact: detect-axios-windows-amd64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build binary
+        run: pyinstaller --onefile locally/detect-axios.py --name ${{ matrix.artifact }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}*
+
+  build-gui:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: detect-axios-gui-linux-amd64
+            sep: ":"
+            extra: ""
+          - os: macos-13
+            artifact: detect-axios-gui-darwin-amd64
+            sep: ":"
+            extra: "--windowed"
+          - os: macos-latest
+            artifact: detect-axios-gui-darwin-arm64
+            sep: ":"
+            extra: "--windowed"
+          - os: windows-latest
+            artifact: detect-axios-gui-windows-amd64
+            sep: ";"
+            extra: "--windowed"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build GUI binary
+        run: >-
+          pyinstaller --onefile locally/detect-axios-gui.py
+          --name ${{ matrix.artifact }}
+          --add-data "${{ github.workspace }}/locally/detect-axios.py${{ matrix.sep }}."
+          --hidden-import detect_axios
+          ${{ matrix.extra }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}*

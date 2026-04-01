@@ -2,8 +2,35 @@
 
 Detection scripts for the [axios supply chain attack](https://socket.dev/blog/axios-npm-package-compromised) targeting `axios@1.14.1` and `axios@0.30.4` which pull in `plain-crypto-js@4.2.1`, a confirmed malicious package.
 
+**Pre-built binaries** (no Python or dependencies needed):
+
+Download from the [latest release](https://github.com/Evaneos/sc-axios-detect/releases/latest), then run:
+
 ```bash
-./locally/detect-axios.sh
+# Linux
+chmod +x detect-axios-linux-amd64
+./detect-axios-linux-amd64
+
+# macOS (Apple Silicon)
+chmod +x detect-axios-darwin-arm64
+./detect-axios-darwin-arm64
+
+# macOS (Intel)
+chmod +x detect-axios-darwin-amd64
+./detect-axios-darwin-amd64
+
+# Windows
+detect-axios-windows-amd64.exe
+```
+
+**From source**:
+
+```bash
+# Linux / macOS
+./locally/detect-axios.sh # No Python 3
+
+# Any platform (Linux, macOS, Windows)
+python3 locally/detect-axios.py # Requires Python 3, no other dependencies
 ```
 
 This scans your entire machine. No arguments needed.
@@ -22,7 +49,7 @@ Supported lockfiles: `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lo
 
 ## Scripts
 
-### Local filesystem scan
+### Local filesystem scan (bash)
 
 Scans a directory tree for installed `node_modules`, lockfiles, and OS-level execution artifacts.
 
@@ -34,6 +61,22 @@ Requires: `find`, `grep` (mandatory); `python3`, `pgrep`, `ss`/`lsof`, `journalc
 
 # Scan the entire disk
 ./locally/detect-axios.sh /
+```
+
+### Local filesystem scan (Python -- cross-platform)
+
+Same detection as the bash version, but runs on Linux, macOS, and Windows. Zero external dependencies -- Python 3 standard library only.
+
+```bash
+# Scan the entire machine (default)
+python3 locally/detect-axios.py
+
+# Scan a specific directory
+python3 locally/detect-axios.py ~/projects/my-app
+
+# Windows
+python locally\detect-axios.py
+python locally\detect-axios.py C:\Users\me\projects
 ```
 
 If any compromise indicators are found, the script writes a JSON report to the current directory with a unique filename (e.g. `axios-scan-myhostname-20260331-120000.json`). No JSON file is produced if the scan is clean.
