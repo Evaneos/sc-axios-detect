@@ -253,9 +253,10 @@ class Scanner:
         found_axios = False
         found_dep = False
         if binary:
-            # Binary: check for byte strings
+            # Binary: match the npm tarball URL to tie package name to version
+            # avoids false positives from unrelated packages (e.g. tslib@1.14.1)
             for v in COMPROMISED_VERSIONS:
-                if b"axios" in content and v.encode() in content:
+                if f"axios/-/axios-{v}.tgz".encode() in content:
                     found_axios = True
             if MALICIOUS_DEP.encode() in content:
                 found_dep = True
