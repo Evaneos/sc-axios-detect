@@ -385,8 +385,6 @@ if (Test-Path $npmCache) {
     $cacacheDir = Join-Path $npmCache "_cacache"
     if (Test-Path $cacacheDir) {
         $cacheHit = Get-ChildItem -Path $cacacheDir -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Length -lt 1MB } |
-            Select-Object -First 500 |
             Where-Object {
                 (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match [regex]::Escape($MALICIOUS_DEP)
             } |
@@ -400,8 +398,6 @@ if (Test-Path $npmCache) {
 
         foreach ($pkg in $RELATED_PKGS) {
             $relHit = Get-ChildItem -Path $cacacheDir -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Length -lt 1MB } |
-                Select-Object -First 500 |
                 Where-Object {
                     (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match [regex]::Escape($pkg)
                 } |
