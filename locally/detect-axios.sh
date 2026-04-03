@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # detect-axios.sh — Scan local filesystem for compromised axios versions
 #
-# Usage: ./detect-axios.sh [root_path]
-#   root_path: directory to scan (default: /)
+# Usage: ./detect-axios.sh [--json] [root_path]
+#   --json:    emit JSON report to stdout (for automation/MDM)
+#   root_path:  directory to scan (default: /)
 #
 # Detects:
 #   - axios@1.14.1 and axios@0.30.4 in lockfiles and installed node_modules
@@ -15,6 +16,17 @@
 
 set -euo pipefail
 
+# --- Fleet mode ---
+JSON_MODE=0
+if [[ "${1:-}" == "--json" ]]; then
+  JSON_MODE=1
+  shift
+  # In fleet mode, redirect all display output (fd 3) to stderr
+  exec 3>&2
+else
+  exec 3>&1
+fi
+
 # --- Pre-run dependency checks ---
 MISSING_REQUIRED=()
 MISSING_OPTIONAL=()
@@ -24,8 +36,8 @@ for cmd in find grep; do
 done
 
 if [[ ${#MISSING_REQUIRED[@]} -gt 0 ]]; then
-  echo "FATAL: missing required commands: ${MISSING_REQUIRED[*]}"
-  echo "Install them and re-run."
+  echo "FATAL: missing required commands: ${MISSING_REQUIRED[*]}" >&3
+  echo "Install them and re-run." >&3
   exit 2
 fi
 
@@ -34,9 +46,9 @@ for cmd in python3 pgrep ss lsof journalctl timeout npm; do
 done
 
 if [[ ${#MISSING_OPTIONAL[@]} -gt 0 ]]; then
-  echo "NOTE: some optional commands are missing: ${MISSING_OPTIONAL[*]}"
-  echo "  The scan will run but some checks will be skipped."
-  echo ""
+  echo "NOTE: some optional commands are missing: ${MISSING_OPTIONAL[*]}" >&3
+  echo "  The scan will run but some checks will be skipped." >&3
+  echo "" >&3
 fi
 
 RED='\033[0;31m'
@@ -96,26 +108,26 @@ escalate_severity() {
 }
 
 log_alert() {
-  echo -e "${RED}[ALERT]${RESET} $1"
+  echo -e "${RED}[ALERT]${RESET} $1" >&3
   FOUND=$((FOUND + 1))
 }
 
 log_warn() {
-  echo -e "${YELLOW}[WARN]${RESET} $1"
+  echo -e "${YELLOW}[WARN]${RESET} $1" >&3
 }
 
 log_info() {
-  echo -e "${GREEN}[OK]${RESET} $1"
+  echo -e "${GREEN}[OK]${RESET} $1" >&3
 }
 
-echo -e "${BOLD}=== Axios Supply Chain Scanner (local) ===${RESET}"
-echo "Scanning: ${ROOT}"
-echo "Looking for: axios@${COMPROMISED_VERSION} / axios@${COMPROMISED_VERSION_0X} / ${MALICIOUS_DEP}"
-echo "Also checking: related campaign packages, RAT payloads, C2 traces, npm cache"
-echo ""
+echo -e "${BOLD}=== Axios Supply Chain Scanner (local) ===${RESET}" >&3
+echo "Scanning: ${ROOT}" >&3
+echo "Looking for: axios@${COMPROMISED_VERSION} / axios@${COMPROMISED_VERSION_0X} / ${MALICIOUS_DEP}" >&3
+echo "Also checking: related campaign packages, RAT payloads, C2 traces, npm cache" >&3
+echo "" >&3
 
 # --- 1. Scan installed node_modules/axios/package.json ---
-echo -e "${BOLD}[1/6] Scanning installed axios packages in node_modules...${RESET}"
+echo -e "${BOLD}[1/6] Scanning installed axios packages in node_modules...${RESET}" >&3
 
 while IFS= read -r pkg_json; do
   version=$(grep -o '"version"\s*:\s*"[^"]*"' "$pkg_json" 2>/dev/null | head -1 | grep -o '[0-9][^"]*' || true)
@@ -139,7 +151,7 @@ done < <(find "$ROOT" \
   2>/dev/null || true)
 
 # --- 2. Scan lockfiles ---
-echo -e "${BOLD}[2/6] Scanning lockfiles...${RESET}"
+echo -e "${BOLD}[2/6] Scanning lockfiles...${RESET}" >&3
 
 scan_lockfile() {
   local file="$1"
@@ -266,7 +278,7 @@ done < <(find "$ROOT" \
   2>/dev/null || true)
 
 # --- 3. Check for malicious package installation ---
-echo -e "${BOLD}[3/6] Scanning for malicious packages in node_modules...${RESET}"
+echo -e "${BOLD}[3/6] Scanning for malicious packages in node_modules...${RESET}" >&3
 
 while IFS= read -r mal_pkg; do
   log_alert "Malicious package installed: ${mal_pkg}"
@@ -290,7 +302,7 @@ for related_pkg in "${RELATED_PKGS[@]}"; do
 done
 
 # --- 4. Scan for RAT payload files (persist after dropper self-cleanup) ---
-echo -e "${BOLD}[4/6] Scanning for RAT payload files...${RESET}"
+echo -e "${BOLD}[4/6] Scanning for RAT payload files...${RESET}" >&3
 
 ARTIFACT_FOUND=false
 OS_TYPE="$(uname)"
@@ -360,7 +372,7 @@ for tmp_dir in "${TEMP_DIRS[@]}"; do
 done
 
 # --- 5. Scan for network/process/log artifacts ---
-echo -e "${BOLD}[5/6] Scanning for C2 network traces and suspicious processes...${RESET}"
+echo -e "${BOLD}[5/6] Scanning for C2 network traces and suspicious processes...${RESET}" >&3
 
 # 5a. Check for running RAT processes
 if command -v pgrep &>/dev/null; then
@@ -404,7 +416,7 @@ fi
 
 # 5c. Check for C2 domain/IP in DNS cache and system logs
 if [[ "$OS_TYPE" == "Darwin" ]] && command -v log &>/dev/null; then
-  echo "  Checking macOS unified log for C2 traces (this may take a moment)..."
+  echo "  Checking macOS unified log for C2 traces (this may take a moment)..." >&3
   if timeout 30 log show --predicate "processImagePath contains 'mDNSResponder'" --last 48h 2>/dev/null \
     | grep -qE "${C2_DOMAIN}|${C2_IP}" 2>/dev/null; then
     log_alert "C2 indicator found in macOS DNS logs (${C2_DOMAIN} or ${C2_IP})"
@@ -445,7 +457,7 @@ for access_log in /var/log/squid/access.log /var/log/nginx/access.log /var/log/a
 done
 
 # --- 6. Check npm cache for malicious tarballs ---
-echo -e "${BOLD}[6/6] Scanning npm cache for compromised packages...${RESET}"
+echo -e "${BOLD}[6/6] Scanning npm cache for compromised packages...${RESET}" >&3
 
 NPM_CACHE_DIR=""
 if command -v npm &>/dev/null; then
@@ -477,12 +489,21 @@ if [[ "$ARTIFACT_FOUND" == true ]]; then
   escalate_severity "CONFIRMED"
 fi
 
-# --- Write JSON report (only if compromise detected) ---
+# --- Write JSON report ---
+# Fleet mode: always generate, output to stdout
+# Normal mode: only generate if compromise detected, write to file
 JSON_FILE=""
-if [[ "$SEVERITY" != "CLEAN" ]]; then
-  JSON_FILE="axios-scan-$(hostname -s 2>/dev/null || echo unknown)-$(date +%Y%m%d-%H%M%S).json"
+GENERATE_JSON=0
 
-  python3 -c "
+if [[ "$JSON_MODE" -eq 1 ]]; then
+  GENERATE_JSON=1
+elif [[ "$SEVERITY" != "CLEAN" ]]; then
+  GENERATE_JSON=1
+  JSON_FILE="axios-scan-$(hostname -s 2>/dev/null || echo unknown)-$(date +%Y%m%d-%H%M%S).json"
+fi
+
+if [[ "$GENERATE_JSON" -eq 1 ]]; then
+  JSON_OUTPUT=$(python3 -c "
 import json, sys, os
 
 findings = []
@@ -507,67 +528,71 @@ report = {
     'findings': findings
 }
 
-with open(sys.argv[8], 'w') as f:
-    json.dump(report, f, indent=2)
+json.dump(report, sys.stdout, indent=2)
 " "$FINDINGS_TMP" \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "$(hostname -s 2>/dev/null || echo unknown)" \
   "$(uname)" \
   "$ROOT" \
   "$SEVERITY" \
-  "$FOUND" \
-  "$JSON_FILE"
+  "$FOUND")
+
+  if [[ "$JSON_MODE" -eq 1 ]]; then
+    echo "$JSON_OUTPUT"
+  elif [[ -n "$JSON_FILE" ]]; then
+    echo "$JSON_OUTPUT" > "$JSON_FILE"
+  fi
 fi
 
 # --- Summary & Guidance ---
-echo ""
-echo -e "${BOLD}=== Scan Complete ===${RESET}"
-echo -e "Findings: ${FOUND} indicator(s) | Severity: ${BOLD}${SEVERITY}${RESET}"
-echo ""
+echo "" >&3
+echo -e "${BOLD}=== Scan Complete ===${RESET}" >&3
+echo -e "Findings: ${FOUND} indicator(s) | Severity: ${BOLD}${SEVERITY}${RESET}" >&3
+echo "" >&3
 
 case "$SEVERITY" in
   CLEAN)
     log_info "No compromised axios versions or malicious dependencies detected."
-    echo ""
-    echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent"
-    echo "  supply chain attacks from silently upgrading to compromised versions."
+    echo "" >&3
+    echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent" >&3
+    echo "  supply chain attacks from silently upgrading to compromised versions." >&3
     exit 0
     ;;
 
   LATENT)
-    echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${YELLOW}${BOLD} SEVERITY: LATENT — Compromised version in lockfile, not yet installed${RESET}"
-    echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
-    echo ""
-    echo -e " ${BOLD}TL;DR:${RESET} The compromised axios version is referenced in your lockfile but has"
-    echo "  not been installed yet. Clean the lockfile and pin axios to a safe version"
-    echo "  before running any install command."
+    echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════════════════${RESET}" >&3
+    echo -e "${YELLOW}${BOLD} SEVERITY: LATENT — Compromised version in lockfile, not yet installed${RESET}" >&3
+    echo -e "${YELLOW}${BOLD}══════════════════════════════════════════════════════════════${RESET}" >&3
+    echo "" >&3
+    echo -e " ${BOLD}TL;DR:${RESET} The compromised axios version is referenced in your lockfile but has" >&3
+    echo "  not been installed yet. Clean the lockfile and pin axios to a safe version" >&3
+    echo "  before running any install command." >&3
     ;;
 
   INSTALLED)
-    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${RED}${BOLD} SEVERITY: INSTALLED — Malicious package was installed (infection probable)${RESET}"
-    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
-    echo ""
-    echo -e " ${BOLD}TL;DR:${RESET} The malicious package plain-crypto-js was found in node_modules."
-    echo "  The postinstall dropper has likely executed. Treat this as an active infection."
-    echo -e "  ${RED}Rotate ALL secrets immediately and alert your security team.${RESET}"
+    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}" >&3
+    echo -e "${RED}${BOLD} SEVERITY: INSTALLED — Malicious package was installed (infection probable)${RESET}" >&3
+    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}" >&3
+    echo "" >&3
+    echo -e " ${BOLD}TL;DR:${RESET} The malicious package plain-crypto-js was found in node_modules." >&3
+    echo "  The postinstall dropper has likely executed. Treat this as an active infection." >&3
+    echo -e "  ${RED}Rotate ALL secrets immediately and alert your security team.${RESET}" >&3
     ;;
 
   CONFIRMED)
-    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
-    echo -e "${RED}${BOLD} SEVERITY: CONFIRMED — Malware execution artifacts detected${RESET}"
-    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}"
-    echo ""
-    echo -e " ${BOLD}TL;DR:${RESET} The RAT payload was deployed on this machine. This system is"
-    echo -e "  compromised. ${RED}Rotate ALL secrets NOW and alert your security team immediately.${RESET}"
+    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}" >&3
+    echo -e "${RED}${BOLD} SEVERITY: CONFIRMED — Malware execution artifacts detected${RESET}" >&3
+    echo -e "${RED}${BOLD}══════════════════════════════════════════════════════════════${RESET}" >&3
+    echo "" >&3
+    echo -e " ${BOLD}TL;DR:${RESET} The RAT payload was deployed on this machine. This system is" >&3
+    echo -e "  compromised. ${RED}Rotate ALL secrets NOW and alert your security team immediately.${RESET}" >&3
     ;;
 esac
 
 # For any compromise level, show JSON location and exit
 if [[ -n "$JSON_FILE" ]]; then
-  echo ""
-  echo -e " ${BOLD}Scan results saved to:${RESET} $(pwd)/${JSON_FILE}"
-  echo "  Send this file to your security team for triage."
+  echo "" >&3
+  echo -e " ${BOLD}Scan results saved to:${RESET} $(pwd)/${JSON_FILE}" >&3
+  echo "  Send this file to your security team for triage." >&3
   exit 1
 fi
