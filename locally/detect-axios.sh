@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # detect-axios.sh — Scan local filesystem for compromised axios versions
 #
-# Usage: ./detect-axios.sh [--fleet] [root_path]
-#   --fleet:    MDM mode — suppress colored output, always emit JSON to stdout
+# Usage: ./detect-axios.sh [--json] [root_path]
+#   --json:    emit JSON report to stdout (for automation/MDM)
 #   root_path:  directory to scan (default: /)
 #
 # Detects:
@@ -17,9 +17,9 @@
 set -euo pipefail
 
 # --- Fleet mode ---
-FLEET_MODE=0
-if [[ "${1:-}" == "--fleet" ]]; then
-  FLEET_MODE=1
+JSON_MODE=0
+if [[ "${1:-}" == "--json" ]]; then
+  JSON_MODE=1
   shift
   # In fleet mode, redirect all display output (fd 3) to stderr
   exec 3>&2
@@ -495,7 +495,7 @@ fi
 JSON_FILE=""
 GENERATE_JSON=0
 
-if [[ "$FLEET_MODE" -eq 1 ]]; then
+if [[ "$JSON_MODE" -eq 1 ]]; then
   GENERATE_JSON=1
 elif [[ "$SEVERITY" != "CLEAN" ]]; then
   GENERATE_JSON=1
@@ -537,7 +537,7 @@ json.dump(report, sys.stdout, indent=2)
   "$SEVERITY" \
   "$FOUND")
 
-  if [[ "$FLEET_MODE" -eq 1 ]]; then
+  if [[ "$JSON_MODE" -eq 1 ]]; then
     echo "$JSON_OUTPUT"
   elif [[ -n "$JSON_FILE" ]]; then
     echo "$JSON_OUTPUT" > "$JSON_FILE"

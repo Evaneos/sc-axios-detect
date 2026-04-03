@@ -12,17 +12,17 @@
       - Running RAT processes and active C2 connections (domain + IP)
       - Malicious tarballs in npm cache
 
-    Designed for Fleet deployment: JSON output to stdout, display to stderr.
+    With -Json, outputs a JSON report to stdout and display to stderr.
 
 .PARAMETER Root
     Directory to scan (default: C:\)
 
 .PARAMETER Fleet
-    MDM mode: suppress display output, always emit JSON to stdout.
+    Emit JSON report to stdout (for automation/MDM).
 #>
 param(
     [string]$Root = "C:\",
-    [switch]$Fleet
+    [switch]$Json
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -46,7 +46,7 @@ $script:ArtifactFound = $false
 # --- Helpers ---
 function Write-Display {
     param([string]$Message)
-    if (-not $Fleet) {
+    if (-not $Json) {
         Write-Host $Message
     } else {
         [Console]::Error.WriteLine($Message)
@@ -430,7 +430,7 @@ $report = [ordered]@{
 
 $json = $report | ConvertTo-Json -Depth 5
 
-if ($Fleet) {
+if ($Json) {
     # Fleet mode: always emit JSON to stdout
     Write-Output $json
 } elseif ($script:Severity -ne "CLEAN") {
