@@ -17,7 +17,7 @@
 .PARAMETER Root
     Directory to scan (default: C:\)
 
-.PARAMETER Fleet
+.PARAMETER Json
     Emit JSON report to stdout (for automation/MDM).
 #>
 param(
@@ -457,7 +457,6 @@ switch ($script:Severity) {
         Write-Display ""
         Write-Display " Best practice: pin exact dependency versions in package.json to prevent"
         Write-Display "  supply chain attacks from silently upgrading to compromised versions."
-        exit 0
     }
     "LATENT" {
         Write-Display "================================================================"
@@ -491,5 +490,10 @@ if ($jsonFile) {
     Write-Display ""
     Write-Display " Scan results saved to: $(Get-Location)\$jsonFile"
     Write-Display "  Send this file to your security team for triage."
-    exit 1
 }
+
+# Exit 0: the scan completed successfully. Finding severity is communicated
+# via the JSON report, not the exit code. This is intentionally divergent from
+# tools that use non-zero exit codes to signal findings — we reserve non-zero
+# for scan failures only.
+exit 0

@@ -574,7 +574,6 @@ case "$SEVERITY" in
     echo "" >&3
     echo -e " ${BOLD}Best practice:${RESET} pin exact dependency versions in package.json to prevent" >&3
     echo "  supply chain attacks from silently upgrading to compromised versions." >&3
-    exit 0
     ;;
 
   LATENT)
@@ -607,10 +606,15 @@ case "$SEVERITY" in
     ;;
 esac
 
-# For any compromise level, show JSON location and exit
+# For any compromise level, show JSON location
 if [[ -n "$JSON_FILE" ]]; then
   echo "" >&3
   echo -e " ${BOLD}Scan results saved to:${RESET} $(pwd)/${JSON_FILE}" >&3
   echo "  Send this file to your security team for triage." >&3
-  exit 1
 fi
+
+# Exit 0: the scan completed successfully. Finding severity is communicated
+# via the JSON report, not the exit code. This is intentionally divergent from
+# tools that use non-zero exit codes to signal findings — we reserve non-zero
+# for scan failures (e.g. missing required commands → exit 2).
+exit 0
