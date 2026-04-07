@@ -41,6 +41,7 @@ $DROPPER_NAMES = @("6202033.vbs", "6202033.ps1", "ld.py")
 $script:Found = 0
 $script:Severity = "CLEAN"
 $script:Findings = [System.Collections.ArrayList]::new()
+$script:Messages = [System.Collections.ArrayList]::new()
 $script:ArtifactFound = $false
 
 # --- Helpers ---
@@ -48,9 +49,13 @@ function Write-Display {
     param([string]$Message)
     if (-not $Json) {
         Write-Host $Message
-    } else {
-        [Console]::Error.WriteLine($Message)
     }
+    # In JSON mode, display output is suppressed entirely
+}
+
+function Add-Message {
+    param([string]$Message)
+    [void]$script:Messages.Add($Message)
 }
 
 function Write-Alert {
@@ -411,6 +416,7 @@ if (Test-Path $npmCache) {
     }
 } else {
     Write-Warn "npm cache directory not found at $npmCache - skipping cache check"
+    Add-Message "npm cache directory not found at $npmCache - skipping cache check"
 }
 
 if ($script:ArtifactFound) {
@@ -426,16 +432,17 @@ $report = [ordered]@{
     severity      = $script:Severity
     finding_count = $script:Found
     findings      = $script:Findings.ToArray()
+    messages      = $script:Messages.ToArray()
 }
 
-$json = $report | ConvertTo-Json -Depth 5
+$jsonOutput = $report | ConvertTo-Json -Depth 5
 
 if ($Json) {
-    # Fleet mode: always emit JSON to stdout
-    Write-Output $json
+    # JSON mode: only output is the JSON report
+    Write-Output $jsonOutput
 } elseif ($script:Severity -ne "CLEAN") {
     $jsonFile = "axios-scan-$($env:COMPUTERNAME)-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
-    $json | Set-Content $jsonFile -Encoding UTF8
+    $jsonOutput | Set-Content $jsonFile -Encoding UTF8
 }
 
 # --- Summary ---

@@ -16,13 +16,13 @@
 
 set -euo pipefail
 
-# --- Fleet mode ---
+# --- JSON mode ---
 JSON_MODE=0
 if [[ "${1:-}" == "--json" ]]; then
   JSON_MODE=1
   shift
-  # In fleet mode, redirect all display output (fd 3) to stderr
-  exec 3>&2
+  # In JSON mode, suppress all display output
+  exec 3>/dev/null
 else
   exec 3>&1
 fi
@@ -38,6 +38,10 @@ done
 if [[ ${#MISSING_REQUIRED[@]} -gt 0 ]]; then
   echo "FATAL: missing required commands: ${MISSING_REQUIRED[*]}" >&3
   echo "Install them and re-run." >&3
+  # In JSON mode, emit a minimal error JSON before exiting
+  if [[ "$JSON_MODE" -eq 1 ]]; then
+    printf '{"error":"missing required commands: %s"}\n' "${MISSING_REQUIRED[*]}"
+  fi
   exit 2
 fi
 
@@ -49,6 +53,7 @@ if [[ ${#MISSING_OPTIONAL[@]} -gt 0 ]]; then
   echo "NOTE: some optional commands are missing: ${MISSING_OPTIONAL[*]}" >&3
   echo "  The scan will run but some checks will be skipped." >&3
   echo "" >&3
+  record_message "missing optional commands: ${MISSING_OPTIONAL[*]} — some checks will be skipped"
 fi
 
 RED='\033[0;31m'
@@ -79,11 +84,16 @@ SEVERITY="CLEAN"  # CLEAN → LATENT → INSTALLED → CONFIRMED
 
 # JSON findings collector — one TSV line per finding: category \t type \t detail \t path
 FINDINGS_TMP=$(mktemp)
-trap 'rm -f "$FINDINGS_TMP"' EXIT
+MESSAGES_TMP=$(mktemp)
+trap 'rm -f "$FINDINGS_TMP" "$MESSAGES_TMP"' EXIT
 
 record_finding() {
   # Args: category type detail [path]
   printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >> "$FINDINGS_TMP"
+}
+
+record_message() {
+  printf '%s\n' "$1" >> "$MESSAGES_TMP"
 }
 
 # Prune expression for find: skip virtual/network filesystems and system dirs
@@ -490,7 +500,7 @@ if [[ "$ARTIFACT_FOUND" == true ]]; then
 fi
 
 # --- Write JSON report ---
-# Fleet mode: always generate, output to stdout
+# JSON mode: always generate, output to stdout (no other output)
 # Normal mode: only generate if compromise detected, write to file
 JSON_FILE=""
 GENERATE_JSON=0
@@ -518,6 +528,12 @@ if os.path.getsize(tsv_file) > 0:
                     entry['path'] = parts[3]
                 findings.append(entry)
 
+messages = []
+msg_file = sys.argv[8]
+if os.path.getsize(msg_file) > 0:
+    with open(msg_file) as f:
+        messages = [l.rstrip('\n') for l in f if l.strip()]
+
 report = {
     'scan_date': sys.argv[2],
     'hostname': sys.argv[3],
@@ -525,7 +541,8 @@ report = {
     'scan_root': sys.argv[5],
     'severity': sys.argv[6],
     'finding_count': int(sys.argv[7]),
-    'findings': findings
+    'findings': findings,
+    'messages': messages
 }
 
 json.dump(report, sys.stdout, indent=2)
@@ -535,7 +552,8 @@ json.dump(report, sys.stdout, indent=2)
   "$(uname)" \
   "$ROOT" \
   "$SEVERITY" \
-  "$FOUND")
+  "$FOUND" \
+  "$MESSAGES_TMP")
 
   if [[ "$JSON_MODE" -eq 1 ]]; then
     echo "$JSON_OUTPUT"
